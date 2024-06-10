@@ -1,0 +1,139 @@
+_schema-version: "3.1"
+ID: nfa-management
+description: A simple CAP project.
+version: 1.0.0
+modules:
+- name: nfa-management-srv
+  type: nodejs
+  path: gen/srv
+  requires:
+  - name: nfa-management-db
+  - name: nfa-management-auth
+  provides:
+  - name: srv-api
+    properties:
+      srv-url: ${default-url}
+  parameters:
+    buildpack: nodejs_buildpack
+    readiness-health-check-http-endpoint: /health
+    readiness-health-check-type: http
+  build-parameters:
+    builder: npm
+- name: nfa-management-db-deployer
+  type: hdb
+  path: gen/db
+  requires:
+  - name: nfa-management-db
+  parameters:
+    buildpack: nodejs_buildpack
+- name: nfa-management-destination-content
+  type: com.sap.application.content
+  requires:
+  - name: nfa-management-destination-service
+    parameters:
+      content-target: true
+  - name: nfa-management_html_repo_host
+    parameters:
+      service-key:
+        name: nfa-management_html_repo_host-key
+  - name: nfa-management-auth
+    parameters:
+      service-key:
+        name: nfa-management-auth-key
+  parameters:
+    content:
+      instance:
+        destinations:
+        - Name: management_nfa_management_html_repo_host
+          ServiceInstanceName: nfa-management-html5-app-host-service
+          ServiceKeyName: nfa-management_html_repo_host-key
+          sap.cloud.service: management
+        - Authentication: OAuth2UserTokenExchange
+          Name: management_nfa_management_auth
+          ServiceInstanceName: nfa-management-auth
+          ServiceKeyName: nfa-management-auth-key
+          sap.cloud.service: management
+        existing_destinations_policy: ignore
+  build-parameters:
+    no-source: true
+- name: nfa-management-app-content
+  type: com.sap.application.content
+  path: .
+  requires:
+  - name: nfa-management_html_repo_host
+    parameters:
+      content-target: true
+  build-parameters:
+    build-result: resources
+    requires:
+    - artifacts:
+      - nsnafs.zip
+      name: nsnafs
+      target-path: resources/
+- name: nsnafs
+  type: html5
+  path: app/nafs
+  build-parameters:
+    build-result: dist
+    builder: custom
+    commands:
+    - npm install
+    - npm run build:cf
+    supported-platforms: []
+resources:
+- name: nfa-management-db
+  type: com.sap.xs.hdi-container
+  parameters:
+    service: hana
+    service-plan: hdi-shared
+- name: nfa-management-auth
+  type: org.cloudfoundry.managed-service
+  parameters:
+    config:
+      tenant-mode: dedicated
+      xsappname: nfa-management-${org}-${space}
+    path: ./xs-security.json
+    service: xsuaa
+    service-plan: application
+- name: nfa-management-destination-service
+  type: org.cloudfoundry.managed-service
+  parameters:
+    config:
+      HTML5Runtime_enabled: true
+      init_data:
+        instance:
+          destinations:
+          - Authentication: NoAuthentication
+            Name: ui5
+            ProxyType: Internet
+            Type: HTTP
+            URL: https://ui5.sap.com
+          - Authentication: NoAuthentication
+            HTML5.DynamicDestination: true
+            HTML5.ForwardAuthToken: true
+            Name: nfa-management-srv-api
+            ProxyType: Internet
+            Type: HTTP
+            URL: ~{srv-api/srv-url}
+          existing_destinations_policy: update
+      version: 1.0.0
+    service: destination
+    service-name: nfa-management-destination-service
+    service-plan: lite
+  requires:
+  - name: srv-api
+- name: nfa-management_html_repo_host
+  type: org.cloudfoundry.managed-service
+  parameters:
+    service: html5-apps-repo
+    service-name: nfa-management-html5-app-host-service
+    service-plan: app-host
+parameters:
+  deploy_mode: html5-repo
+  enable-parallel-deployments: true
+build-parameters:
+  before-all:
+  - builder: custom
+    commands:
+    - npm ci
+    - npx cds build --production
